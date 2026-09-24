@@ -1,0 +1,69 @@
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true,
+  keepalive: true
+}
+
+import Display from "lib/Display.lf";
+
+preamble {=
+  #include <stdio.h> 
+  #include <pico/stdlib.h>
+  #include <hardware/gpio.h>
+=}
+
+main reactor {
+  physical action a
+  state count: int = 0;
+  d = new Display();
+
+  reaction(startup) -> a {=
+    action = a;
+    gpio_init(BUTTON_A);
+    gpio_set_dir(BUTTON_A, GPIO_IN);
+    gpio_pull_up(BUTTON_A);
+    gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL, true, &button_a_callback);
+  =}
+
+  preamble {=
+    #define BUTTON_A 25
+    static void* action;
+    
+    void button_a_callback(uint gpio, uint32_t events) {
+        lf_schedule(action, 0);
+    }
+  =}
+
+  initial mode Up {
+    timer up_timer(0, 500msec)
+
+    reaction(up_timer) -> d.line0 {=
+      static char buf[17];
+      self->count++;
+      snprintf(buf, 17, "count (up): %d", self->count);
+      lf_set(d.line0, buf);
+    =}
+
+    reaction(a) -> Down {=
+      lf_set_mode(Down);
+    =}
+  }
+
+  mode Down {
+    timer down_timer(0, 1sec);
+
+    reaction(down_timer) -> d.line0 {=
+      static char buf[17];
+      self->count--;
+      snprintf(buf, 17, "count (down): %d", self->count);
+      lf_set(d.line0, buf);
+    =}
+
+    reaction(a) -> Up {=
+      lf_set_mode(Up);
+    =}
+  }
+}

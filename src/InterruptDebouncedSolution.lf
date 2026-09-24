@@ -1,0 +1,46 @@
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true,
+  keepalive: true
+}
+
+preamble {=
+  #include <stdio.h> 
+  #include <pico/stdlib.h>
+  #include <hardware/gpio.h>
+=}
+
+main reactor {
+  physical action a
+  state last_press: instant_t = 0;
+
+  reaction(startup) -> a {=
+    action = a;
+    gpio_init(BUTTON_A);
+    gpio_set_dir(BUTTON_A, GPIO_IN);
+    gpio_pull_up(BUTTON_A);
+    gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL, true, &button_a_callback);
+  =}
+
+  preamble {=
+    #define BUTTON_A 25
+    static void* action;
+    
+    void button_a_callback(uint gpio, uint32_t events) {
+        lf_schedule(action, 0);
+    }
+  =}
+
+  reaction(a) {=
+    instant_t now = lf_time_physical_elapsed();
+    interval_t since_last = now - self->last_press;
+    if (since_last < MSEC(200)) {
+        return;
+    }
+    printf("Button pressed. %d ms since last press\n", (int)(since_last / MSEC(1)));
+    self->last_press = now;
+  =}
+}

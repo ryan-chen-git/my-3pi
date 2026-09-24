@@ -1,0 +1,28 @@
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display from "lib/Display.lf"
+
+main reactor {
+  d = new Display()
+  timer t(0, 250 msec)
+  state button_a_pressed: bool = false
+
+  reaction(startup) {=
+    gpio_init(PICO_DEFAULT_LED_PIN);
+    gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_IN);
+  =}
+
+  reaction(t) -> d.line0, d.line1 {=
+    self->button_a_pressed = sio_hw->gpio_in & (1u << PICO_DEFAULT_LED_PIN);
+    lf_set(d.line0, "button A:");
+    static char buf1[17];
+    snprintf(buf1, 17, "%s", self->button_a_pressed ? "not pressed" : "pressed");
+    lf_set(d.line1, buf1);
+  =}
+}
