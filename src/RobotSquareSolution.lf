@@ -1,0 +1,85 @@
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display, Encoders, Motors, GyroAngle from <pololu-3pi-c>
+import AngleToDistance from "./AngleToDistance.lf"
+
+preamble {=
+  #include <math.h>
+=}
+
+main reactor {
+    timer t(0, 50ms);
+
+    motors = new Motors()
+    encoder = new Encoders()
+    gyro = new GyroAngle()
+    left_dist = new AngleToDistance()
+    right_dist = new AngleToDistance()
+    display = new Display()
+
+    encoder.left -> left_dist.angle
+    encoder.right -> right_dist.angle
+
+    state dist: float = 0
+    state angle: float = 0
+    state start_dist: float = 0
+    state angle_start: float = 0
+
+    reaction(t) -> encoder.trigger, gyro.trigger {=
+      lf_set(encoder.trigger, true);
+      lf_set(gyro.trigger, true);
+    =}
+
+    reaction(left_dist.distance, right_dist.distance) -> display.line3 {=
+      self->dist = (left_dist.distance->value + right_dist.distance->value) / 2.0f;
+    =}
+
+    reaction(gyro.z) {=
+      self->angle = gyro.z->value;
+    =}
+
+    reaction(startup) -> motors.left_power, motors.right_power, display.line0 {=
+      lf_set(motors.left_power, 0.1f);
+      lf_set(motors.right_power, 0.1f);
+      lf_set(display.line0, "DRIVE");
+      =}
+
+      initial mode DRIVE {
+        reaction(left_dist.distance, right_dist.distance) -> reset(TURN), motors.left_power, motors.right_power, display.line0, display.line1 {=
+          static char buf[17];
+          float d = self->dist - self->start_dist;
+          snprintf(buf, 17, "d: %.2f m", d);
+          lf_set(display.line1, buf);
+
+          if (d >= 0.5f) {
+            self->angle_start = self->angle;
+            lf_set(motors.left_power, 0.1f);
+            lf_set(motors.right_power, -0.1f);
+            lf_set(display.line0, "TURN");
+            lf_set_mode(TURN);
+          }
+        =}
+      }
+      mode TURN {
+        reaction(gyro.z) -> reset(DRIVE), motors.left_power, motors.right_power, display.line0, display.line2 {=
+          static char buf[17];
+          float a = self->angle - self->angle_start;
+          snprintf(buf, 17, "a: %.1f deg", a);
+          lf_set(display.line2, buf);
+
+          if (fabsf(a) >= 90.0f) { // Approximately 90 degrees
+            self->start_dist = self->dist;
+            lf_set(motors.left_power, 0.1f);
+            lf_set(motors.right_power, 0.1f);
+            lf_set(display.line0, "DRIVE");
+            lf_set_mode(DRIVE);
+          }
+        =}
+      }
+}

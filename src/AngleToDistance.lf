@@ -1,0 +1,21 @@
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+preamble {=
+  #include <math.h>
+=}
+
+reactor AngleToDistance(wheel_diameter: float = 0.03175) {
+    input angle: int32_t
+    output distance: float
+
+    reaction(angle) -> distance {=
+      float meters_per_degree = (float)(M_PI * self->wheel_diameter / 360.00);
+      lf_set(distance, (float)angle->value * meters_per_degree);
+    =}
+}
