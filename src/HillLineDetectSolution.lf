@@ -1,0 +1,42 @@
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Line, Display from <pololu-3pi-c>
+
+main reactor(calibration_time: time = 10 s, sample_period: time = 100 ms, threshold: int = 500) {
+  line = new Line()
+  disp = new Display()
+
+  timer t(0, sample_period)
+  timer end_calibration(calibration_time)
+
+  reaction(startup) -> disp.line0, disp.line1, disp.line2 {=
+    lf_set(disp.line0, "CALIBRATING");
+    lf_set(disp.line1, "Roll robot over");
+    lf_set(disp.line2, "light and dark.");
+  =}
+
+  reaction(end_calibration) -> line.calibrate {=
+    lf_set(line.calibrate, false);
+  =}
+
+  reaction(t) -> line.trigger {=
+    lf_set(line.trigger, true);
+  =}
+
+  reaction(line.reflect) -> disp.line0, disp.line1, disp.line2 {=
+    uint16_t* r = line.reflect -> value;
+    bool left = r[0] > self->threshold || r[1] > self->threshold;
+    bool right = r[3] > self->threshold || r[4] > self->threshold;
+    bool center = r[1] > self->threshold || r[2] > self->threshold;
+
+    lf_set(disp.line0, left ? "Left" : "");
+    lf_set(disp.line1, center ? "Center" : "");
+    lf_set(disp.line2, right ? "Right" : "");
+  =}
+}

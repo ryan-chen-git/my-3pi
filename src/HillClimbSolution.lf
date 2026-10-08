@@ -1,0 +1,184 @@
+target C {
+  platform: {
+    name: "rp2040",
+    board: "pololu_3pi_2040_robot"
+  },
+  single-threaded: true
+}
+
+import Display, Encoders, MotorsWithFeedback, GyroAngle, Line, Accelerometer from <pololu-3pi-c>
+import AngleToDistance from "./AngleToDistance.lf"
+import Tilt from "lib/Tilt.lf"
+
+preamble {=
+  #include <math.h>
+=}
+
+main reactor(
+    calibration_time: time = 10 s,
+    sample_period: time = 50 ms,
+    threshold: int = 500, 
+    speed: float = 0.1, 
+    roll_gain: float = 0.005
+) {
+  timer t(0, sample_period)
+  timer end_calibration(calibration_time)
+  
+  line = new Line()
+  motors = new MotorsWithFeedback()
+  encoder = new Encoders()
+  gyro = new GyroAngle()
+  left_dist = new AngleToDistance()
+  right_dist = new AngleToDistance()
+  display = new Display()
+  accel = new Accelerometer()
+  tilt = new Tilt()
+
+  encoder.left -> left_dist.angle
+  encoder.left -> motors.left
+  encoder.right -> right_dist.angle
+  encoder.right -> motors.right
+  accel.x -> tilt.x
+  accel.y -> tilt.y
+  accel.z -> tilt.z
+
+  state calibrating: bool = true
+  state dist: float = 0
+  state angle: float = 0
+  state start_dist: float = 0
+  state angle_start: float = 0
+  state turn_left: bool = false
+  state turn_angle: float = 90
+  state going_up: bool = true
+
+  reaction(t) -> encoder.trigger, gyro.trigger, accel.trigger, line.trigger {=
+    lf_set(line.trigger, true);
+    if (!self->calibrating) {
+      lf_set(encoder.trigger, true);
+      lf_set(gyro.trigger, true);
+      lf_set(accel.trigger, true);
+    }
+  =}
+
+  reaction(left_dist.distance, right_dist.distance) {=
+      self->dist = (left_dist.distance->value + right_dist.distance->value) / 2.0f;
+  =}
+
+  reaction(gyro.z) {=
+      self->angle = gyro.z->value;
+  =}
+
+  reaction(startup) -> display.line0, display.line1 {=
+    lf_set(display.line0, "CALIBRATING");
+    lf_set(display.line1, "move robot around");
+  =}
+
+  reaction(end_calibration) -> line.calibrate {=
+    lf_set(line.calibrate, false);
+  =}
+
+  reaction(t) -> line.trigger {=
+    lf_set(line.trigger, true);
+  =}
+
+  initial mode CALIBRATE {
+    reaction(end_calibration) -> reset(DRIVE), line.calibrate, motors.left_speed, motors.right_speed, display.line0, display.line1 {=
+        lf_set(line.calibrate, false);
+        self->calibrating = false;
+        self->start_dist = self->dist;
+        lf_set(motors.left_speed, self->speed);
+        lf_set(motors.right_speed, self->speed);
+        lf_set(display.line0, "DRIVE");
+        lf_set(display.line1, "");
+        lf_set_mode(DRIVE);
+    =}
+  }
+
+  mode DRIVE {
+    reaction(tilt.pitch, tilt.roll) -> motors.left_speed, motors.right_speed, display.line2 {=
+        static char buf[17];
+        float direction = self->going_up ? 1.0f : -1.0f;
+        float correction = direction * self->roll_gain * tilt.roll->value;
+        float l = self->speed - correction;
+        float r = self->speed + correction;
+        if  (l < 0.0f) l = 0.0f;
+        if  (r < 0.0f) r = 0.0f;
+        if (l > 2.0f * self->speed) l = 2.0f * self->speed;
+        if (r > 2.0f * self->speed) r = 2.0f * self->speed;
+        lf_set(motors.left_speed, l);
+        lf_set(motors.right_speed, r);
+        snprintf(buf, 17, "Pitch: %.1f Roll: %.1f", tilt.pitch->value, tilt.roll->value);
+        lf_set(display.line2, buf);
+    =}
+
+    reaction(line.reflect) -> reset(BACKUP), motors.left_speed, motors.right_speed, display.line0, display.line3 {=
+        uint16_t* r = line.reflect -> value;
+        bool left = r[0] > self->threshold || r[1] > self->threshold;
+        bool right = r[3] > self->threshold || r[4] > self->threshold;
+        bool center = r[1] > self->threshold || r[2] > self->threshold || r[3] > self->threshold;
+
+        if (left || right || center) {
+            if (left && !right) {
+                self->turn_left = false;
+                self->turn_angle = 15.0f;
+                lf_set(display.line3, "Turn Right");
+            } else if (right && !left) {
+                self->turn_left = true;
+                self->turn_angle = 15.0f;
+                lf_set(display.line3, "Turn Left");
+            } else {
+                self->turn_left = true;
+                self->turn_angle = 180.0f;
+                self->going_up = !self->going_up;
+                lf_set(display.line3, "Turn Around");
+            }
+            self->start_dist = self->dist;
+            lf_set(motors.left_speed, -self->speed);
+            lf_set(motors.right_speed, -self->speed);
+            lf_set(display.line0, "BACKUP");
+            lf_set_mode(BACKUP);
+        }
+    =}
+  }
+
+  mode BACKUP {
+    reaction(left_dist.distance, right_dist.distance) -> reset(TURN), motors.left_speed, motors.right_speed, display.line0, display.line1 {=
+        float d = self->dist - self->start_dist;
+        static char buf[17];
+        snprintf(buf, 17, "d: %.2f m", d);
+        lf_set(display.line1, buf);
+
+        if (d <= -0.1f) {
+            if (self->turn_left) {
+                lf_set(motors.left_speed, -0.1f);
+                lf_set(motors.right_speed, 0.1f);
+            } else {
+                lf_set(motors.left_speed, 0.1f);
+                lf_set(motors.right_speed, -0.1f);
+            }
+            self->angle_start = self->angle;
+            lf_set(display.line0, "TURN");
+            lf_set_mode(TURN);
+        }
+    =}
+  }
+
+  mode TURN {
+    reaction(gyro.z) -> reset(DRIVE), motors.left_speed, motors.right_speed, display.line0, display.line2, display.line3 {=
+        float a = self->angle - self->angle_start;
+        static char buf[17];
+        snprintf(buf, 17, "a: %.1f deg", a);
+        lf_set(display.line2, buf);
+
+        if (fabsf(a) >= self->turn_angle) {
+            self->start_dist = self->dist;
+            lf_set(motors.left_speed, 0.1f);
+            lf_set(motors.right_speed, 0.1f);
+            lf_set(display.line0, self->going_up ? "DRIVE UP" : "DRIVE DOWN");
+            lf_set(display.line3, "");
+            lf_set_mode(DRIVE);
+        }
+    =}
+  }
+
+}
