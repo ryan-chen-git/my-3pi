@@ -185,6 +185,8 @@ main reactor {
   =}
 
   timer print_hw_timer(0, 1000ms)
+  timer cancel_t(5000ms)
+  state led_timer_id: uint32_t = 0
 
   reaction(startup) {=
     gpio_init(PICO_DEFAULT_LED_PIN);
@@ -193,11 +195,32 @@ main reactor {
 
     virtual_timer_init();
 
-    virtual_timer_start_repeated(1000000, led0_toggle);
-    virtual_timer_start_repeated(2000000, do_nothing);
+    uint32_t led_toggle_id;
+    // 9.2.3:
+    //virtual_timer_start(10000000, timer_fired);
 
-    // Uncomment instead to test 9.2.3 independently:
-    virtual_timer_start(10000000, timer_fired);
+    //9.2.4
+    //virtual_timer_start(1000000, led0_toggle);
+    //virtual_timer_start(2000000, led0_toggle);
+    //virtual_timer_start(3000000, led0_toggle);
+    //virtual_timer_start(4000000, led0_toggle);
+
+    // 9.2.5
+    //self->led_timer_id = virtual_timer_start_repeated(1000000, led0_toggle);
+
+    // 9.2.7
+    virtual_timer_start(1000000, led0_toggle);
+    virtual_timer_start(2000000, led0_toggle);
+    virtual_timer_start(3000000, led0_toggle);
+    virtual_timer_start(4000000, led0_toggle);
+    virtual_timer_start(5000000, led0_toggle);
+    virtual_timer_start(6000000, led0_toggle);
+
+    // 9.2.8
+    //virtual_timer_start_repeated(1000000, led0_toggle);
+    //virtual_timer_start_repeated(2000000, do_nothing);
+
+
   =}
 
   reaction(print_hw_timer) -> display.line1 {=
@@ -206,4 +229,11 @@ main reactor {
              (unsigned long)timer_hw->timerawl);
     lf_set(display.line1, buf);
   =}
+
+/* TODO: add reaction and timer to create the environment to test */
+//4.2.6
+  reaction(cancel_t) {=
+    virtual_timer_cancel(self->led_timer_id);
+  =}
+
 }
